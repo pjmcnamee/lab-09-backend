@@ -1,0 +1,27 @@
+{
+  "name": "lab-09-backend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "server.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start": "node server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pjmcnamee/lab-09-backend.git"
+  },
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/pjmcnamee/lab-09-backend/issues"
+  },
+  "homepage": "https://github.com/pjmcnamee/lab-09-backend#readme",
+  "dependencies": {
+    "cors": "^2.8.4",
+    "dotenv": "^6.1.0",
+    "express": "^4.16.4",
+    "pg": "^7.6.0",
+    "superagent": "^4.0.0-beta.5"
+  }
+}
