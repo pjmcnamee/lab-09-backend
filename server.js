@@ -23,7 +23,7 @@ app.get('/weather', getWeather);
 
 app.get('/yelp', getYelp);
 
-app.get('/movies', getMovie);
+// app.get('/movies', getMovie);
 
 function handleError(err, res){
   console.error('ERR', err);
@@ -41,9 +41,14 @@ Location.prototype.save = function(){
     INSERT INTO locations
       (search_query,formatted_query,latitude,longitude)
       VALUES($1,$2,$3,$4)
-  `;
+      RETURNING id
+      ;`;
   let values = Object.values(this);
-  client.query(SQL,values);
+  return client.query(SQL,values)
+    .then(result =>
+    { this.id = result.rows[0].id;
+      return this;
+    })
 }
 
 Location.fetchLocation = (query) => {
@@ -54,8 +59,7 @@ Location.fetchLocation = (query) => {
       if( ! data.body.results.length){ throw 'No Data Received';}
       else{
         let location = new Location(query, data.body.results[0]);
-        location.save();
-        return location;
+        return location.save();
       }
     });
 };
@@ -72,7 +76,8 @@ function getLocation(request, response){
 
     cacheMiss: () => {
       Location.fetchLocation(request.query.data)
-        .then(data => response.send(data));
+        .then(data => {
+          response.send(data)});
     },
   };
 
@@ -103,42 +108,84 @@ function DailyWeather(data){
   this.time = new Date(data.time * 1000).toString().slice(0,15);
 }
 
+DailyWeather.prototype.save = function(id) {
+  const SQL = `INSERT INTO weathers (forecast, time, location_id, created_at) VALUES ($1, $2, $3, $4);`;
+  const values = Object.values(this);
+  values.push(id);
+  values.push(Date.now());
+  client.query(SQL, values);
+}
+
+DailyWeather.deleteEntryById = function (id) {
+  const SQL = `DELETE FROM weathers WHERE location_id=${id};`;
+  client.query(SQL)
+    .then(() => {
+      console.log('DELETED entry from SQL');
+    })
+    .catch(error => handleError(error));
+}
+
+DailyWeather.lookup = function(handler) {
+  const SQL = `SELECT * FROM weathers WHERE location_id=$1;`;
+  client.query(SQL, [handler.location.id])
+    .then(result => {
+      if(result.rowCount > 0) {
+        console.log('Data existed in SQL');
+
+        let currentAge = Date.now() - result.rows[0].created_at / (1000 * 60);
+
+        if (result.rowCount > 0 && currentAge > 60) {
+          console.log('DATA was too old')
+          DailyWeather.deleteEntryById(handler.location.id)
+          handler.cacheMiss();
+        } else {
+          console.log('DATA was just right')
+          handler.cacheHit(result);
+        }
+      } else {
+        console.log('Got data from API');
+        handler.cacheMiss();
+      }
+    })
+    .catch(error => handleError(error));
+};
+
+DailyWeather.fetch = function(location) {
+  const url = `https://api.darksky.net/forecast/${process.env.DARK_SKY_API}/${location.latitude},${location.longitude}`;
+
+  return superagent.get(url)
+    .then(result => {
+      const weatherSummaries = result.body.daily.data.map(day => {
+        const summary = new DailyWeather(day);
+        summary.save(location.id);
+        return summary;
+      });
+      return weatherSummaries;
+    });
+};
+
+
 function getWeather(request, response){
-  const URL = `https://api.darksky.net/forecast/${process.env.DARK_SKY_API}/${request.query.data.latitude},${request.query.data.longitude}`;
-  return superagent.get(URL)
-    .then(forecastResults =>{
-      response.send(forecastResults.body.daily.data.map((day)=>{
-        return new DailyWeather(day);
-      }));
-    })
-    .catch(error => handleError(error, response));
-}
-/*---------------------YELP--------------------------*/
-function getYelp(request, response){
-  const URL = `https://api.yelp.com/v3/businesses/search?term=restaurants&latitude=${request.query.data.latitude}&longitude=${request.query.data.longitude}`;
-  return superagent.get(URL)
-    .set('Authorization', `Bearer ${process.env.YELP_API}`)
-    .then(yelpResults =>{
-      response.send(yelpResults.body.businesses.map((restaurants)=>{
-        return new YelpRestaurants(restaurants);
-      }));
-    })
-    .catch(error => handleError(error, response));
-}
-/*---------------------MOVIES--------------------------*/
-function getMovie(request, response){
-  let cityname = request.query.data.formatted_query.split(',')[0];
-  const URL = `https://api.themoviedb.org/3/search/movie?api_key=${process.env.MOVIES_API}&language=en-US&query=${cityname}&page=1`
-  return superagent.get(URL)
-    .then(movie =>{
-      response.send(movie.body.results.map((results)=>{
-        return new Movie(results);
-      }));
-    })
-    .catch(error => handleError(error, response));
+  const handler = {
+
+    location: request.query.data,
+
+    cacheHit: function(result) {
+      response.send(result.rows);
+    },
+
+    cacheMiss: function() {
+      DailyWeather.fetch(request.query.data)
+        .then( results => response.send(results) )
+        .catch( console.error );
+    },
+  };
+
+  DailyWeather.lookup(handler);
+
 }
 
-
+// /*---------------------YELP--------------------------*/
 function YelpRestaurants(data){
   this.name = data.name;
   this.image_url = data.image_url;
@@ -147,14 +194,108 @@ function YelpRestaurants(data){
   this.url = data.url;
 }
 
-function Movie(data){
-  this.title = data.title;
-  this.overview = data.overview;
-  this.average_vote = data.vote_average;
-  this.total_votes = data.vote_count;
-  this.image_url = `https://image.tmdb.org/t/p/original/${data.poster_path}`;
-  this.popularity = data.popularity;
-  this.released_on = data.release_date;
+YelpRestaurants.prototype.save = function(id) {
+  const SQL = `INSERT INTO yelps (name, image_url, price, rating, url, location_id, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7)`
+  const values = Object.values(this);
+  values.push(id);
+  values.push(Date.now());
+  client.query(SQL, values);
 }
+
+YelpRestaurants.deleteEntryById = function(id) {
+  const SQL = `DELETE FROM yelps WHERE location_id=${id};`;
+  client.query(SQL)
+    .then(() => {
+      console.log('DELETED entry from SQL');
+    })
+    .catch(error => handleError(error))
+}
+
+YelpRestaurants.lookup = function(handler) {
+  const SQL = `SELECT * FROM yelps WHERE location_id=$1;`;
+  client.query(SQL, [handler.location.id])
+    .then(result => {
+      if(result.rowCount > 0) {
+        console.log('Data existed in SQL');
+
+        let currentAge = Date.now() - result.rows[0].created_at / (1000 * 60 * 60);
+
+        if (result.rowCount > 0 && currentAge > 23) {
+          console.log('DATA was too old')
+          YelpRestaurants.deleteEntryById(handler.location.id)
+          handler.cacheMiss();
+        } else {
+          console.log('DATA was just right')
+          handler.cacheHit(result);
+        }
+
+      } else {
+        console.log('Got data from API');
+        handler.cacheMiss();
+      }
+    })
+    .catch(error => handleError(error));
+};
+
+YelpRestaurants.fetch = function(location) {
+  const URL = `https://api.yelp.com/v3/businesses/search?term=restaurants&latitude=${location.latitude}&longitude=${location.longitude}`;
+
+  return superagent.get(URL)
+    .set('Authorization', `Bearer ${process.env.YELP_API}`)
+    .then(results =>{
+      const yelpSummaries = results.body.businesses.map(restaurants => {
+        const summary = new YelpRestaurants(restaurants);
+        summary.save(location.id);
+        return summary;
+      });
+      return yelpSummaries;
+    });
+};
+
+
+
+
+function getYelp(request, response){
+
+  const handler = {
+    location: request.query.data,
+
+    cacheHit: function(result) {
+      response.send(result.rows);
+    },
+
+    cacheMiss: function() {
+      YelpRestaurants.fetch(request.query.data)
+        .then ( results => response.send(results))
+        .catch(console.error);
+    },
+  };
+  YelpRestaurants.lookup(handler)
+}
+// /*---------------------MOVIES--------------------------*/
+// function getMovie(request, response){
+//   let cityname = request.query.data.formatted_query.split(',')[0];
+//   const URL = `https://api.themoviedb.org/3/search/movie?api_key=${process.env.MOVIES_API}&language=en-US&query=${cityname}&page=1`
+//   return superagent.get(URL)
+//     .then(movie =>{
+//       response.send(movie.body.results.map((results)=>{
+//         return new Movie(results);
+//       }));
+//     })
+//     .catch(error => handleError(error, response));
+// }
+
+
+
+
+// function Movie(data){
+//   this.title = data.title;
+//   this.overview = data.overview;
+//   this.average_vote = data.vote_average;
+//   this.total_votes = data.vote_count;
+//   this.image_url = `https://image.tmdb.org/t/p/original/${data.poster_path}`;
+//   this.popularity = data.popularity;
+//   this.released_on = data.release_date;
+// }
 
 app.listen(PORT, () => console.log(`App is up on ${PORT}`) );
