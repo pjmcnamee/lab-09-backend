@@ -16,6 +16,7 @@ CREATE TABLE weathers(
     id SERIAL PRIMARY KEY,
     forecast VARCHAR(255),
     time VARCHAR(255),
+    created_at BIGINT,
     location_id INTEGER NOT NULL REFERENCES locations(id)
 );
 
@@ -23,10 +24,12 @@ CREATE TABLE yelps(
     id SERIAL PRIMARY KEY,
     name VARCHAR(255),
     image_url VARCHAR(255),
-    price NUMERIC(5),
-    rating NUMERIC(4,4),
+    price VARCHAR(255),
+    rating NUMERIC,
     url VARCHAR(255),
+    created_at BIGINT,
     location_id INTEGER NOT NULL REFERENCES locations(id)
+    
 );
 
 CREATE TABLE movies(
@@ -38,5 +41,7 @@ CREATE TABLE movies(
     image_url VARCHAR(255),
     popularity NUMERIC(8),
     released_on VARCHAR(255),
+    created_at BIGINT,
     location_id INTEGER NOT NULL REFERENCES locations(id)
+    
 );
